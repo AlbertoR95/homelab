@@ -1,24 +1,39 @@
-# homelab
-Cyber security home lab
+# 🔐 Cybersecurity Homelab Documentation
 
-This is my first project to build a functional cybersecurity homelab using Proxmox, Kali Linux, and a variety of open-source tools. The goal: master blue team operations, logging, monitoring, and incident response in a real, virtualized network environment.
+Welcome to my cybersecurity homelab! This is a fully self-hosted environment using **Proxmox VE**, **pfSense**, and multiple virtual machines.
 
-## Goals
-- Network monitoring
-- Intrusion detection
-- Malware analysis
-- Threat hunting
-- SOC-style simulations
+---
 
-## Tools I’ll be using:
-- Proxmox
-- Zeek, Suricata (?)
-- Kali Linux, Windows 10
-- ELK Stack / Graylog (?)
-- Wireshark, OpenVAS
-- Python/Bash scripting
+## 🛠️ Lab Overview
 
-## Logs
-- Week 0: Planning & Setup
-- Week 1: Proxmox Install & First VMs
+- **Hypervisor:** Proxmox VE (on Lenovo M710q mini PC)
+- **Firewall:** pfSense (on mini PC with dual NICs)
+- **Switch:** Managed switch for VLAN segmentation
+- **VMs:** Kali Linux, Windows 11, Linux Mint
 
+---
+
+## 🎯 Objectives
+
+- Learn practical cybersecurity and networking
+- Practice pentesting, system hardening, and firewall rules
+- Host personal tools like Obsidian 
+- Document everything for learning and future reference
+
+---
+
+## 📚 Folder Structure
+
+- `setup/` → Install and config steps (Proxmox, pfSense, VMs)
+- `systems/` → Notes per OS (Kali, Win, etc.)
+- `notes/` → Extra concepts, issues, troubleshooting
+
+---
+
+## ✅ Current Status
+
+- [x] Proxmox installed and working
+- [x] VMs: Kali, Mint, Win11, Debian installed
+- [x] pfSense firewall being configured
+- [ ] Switch setup and VLAN config
+- [ ] Remote access/VPN
