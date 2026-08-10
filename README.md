@@ -1,192 +1,109 @@
-# 🔐 Cybersecurity Homelab
+# Cybersecurity Homelab
 
-> A self-hosted cybersecurity and networking lab built on Proxmox VE, pfSense, and multiple virtual machines — documenting both the successes and the real-world challenges of building a lab from scratch.
+A segmented home network built around a dedicated pfSense firewall, a Proxmox virtualisation host, and a managed switch. The goal is hands-on experience with networking, virtualisation, and defensive security — and to document the process honestly, including the parts that took several attempts to get right.
 
----
-
-## 🗺️ Architecture Overview
+## Current architecture
 
 ```
-[Home WiFi Router]
-        │
-        │ (WAN - single Ethernet port)
-        ▼
-[Proxmox VE Host — Lenovo M710q]
-        │
-   ┌────┴─────────────────┐
-   │                      │
-[vmbr0]               [vmbr1]
-(WAN bridge)       (LAN bridge — isolated)
-   │                      │
-[pfSense VM]──────────────┤
-   │ WAN        LAN       │
-   └──────────────────────┤
-                          │
-              ┌───────────┼───────────┐
-              │           │           │
-          [Kali VM]  [Windows 11]  [Debian VM]
-         (attacker)  (target)      (server)
+Home router (192.168.1.254)
+        |  WiFi
+TP-Link TL-WR902AC — client mode (192.168.1.250)
+        |  Ethernet
+pfSense — WAN igc0 (192.168.1.194, DHCP)
+        |
+pfSense — LAN igc1 (10.10.10.1/24)
+        |
+HORACO 2.5GbE managed switch (10.10.10.250)
+        |
+   +----+----+
+Proxmox    Workstation
+10.10.10.10   DHCP
 ```
 
----
+The uplink is the one part of this setup that isn't ideal. The router is too far from the lab to run a cable, so a WiFi client bridge sits between the two. It works, but it's the weakest link in the chain and worth remembering when something behaves oddly.
 
-## 🛠️ Hardware
+## Hardware
 
-| Component | Details |
-|-----------|---------|
-| **Hypervisor host** | Lenovo M710q Mini PC |
-| **Hypervisor** | Proxmox VE |
-| **Firewall** | pfSense (VM inside Proxmox) |
-| **Physical NICs** | 1x Ethernet (single-port constraint) |
-| **Internet source** | Home WiFi → Ethernet bridge |
+| Component | Model | Role |
+|---|---|---|
+| Firewall | Micro-PC, 4x Intel I226-V | pfSense 2.7.2, physical |
+| Hypervisor | Lenovo M710q | Proxmox VE |
+| Switch | HORACO 2.5GbE, 8 port + SFP+ | Managed, VLAN-capable |
+| WiFi bridge | TP-Link TL-WR902AC v4 | Client mode, WiFi to Ethernet |
 
----
+## Addressing
 
-## 💻 Virtual Machines
+The lab runs on `10.10.10.0/24`, deliberately separate from the home network on `192.168.1.0/24`. Keeping them apart matters: if pfSense had the same subnet on both sides, routing breaks in ways that are genuinely difficult to diagnose.
 
-| VM | OS | Role | Network |
-|----|-----|------|---------|
-| `pfsense` | pfSense CE | Firewall / Router | vmbr0 (WAN) + vmbr1 (LAN) |
-| `kali` | Kali Linux | Attacker / Pentesting | vmbr1 |
-| `win11` | Windows 11 | Target machine | vmbr1 |
-| `debian` | Debian / Linux Mint | Server / general use | vmbr1 |
+| Host | Address | Notes |
+|---|---|---|
+| pfSense LAN | 10.10.10.1 | Gateway, DHCP and DNS for the lab |
+| Proxmox | 10.10.10.10 | Static, outside the DHCP pool |
+| Switch management | 10.10.10.250 | Static |
+| DHCP pool | 10.10.10.100–200 | Clients and VMs |
 
----
+Static addresses sit below `.100` and above `.200` so they can never collide with a lease.
 
-## 🎯 Objectives
+## pfSense interfaces
 
-- Learn practical networking: subnets, routing, VLANs, firewall rules
-- Practice pentesting techniques in a safe, isolated environment
-- Understand pfSense configuration from scratch
-- Simulate real-world SOC and attacker/defender scenarios
-- Document everything for learning and portfolio
+| Interface | Port | Assignment |
+|---|---|---|
+| WAN | igc0 | DHCP from the WiFi bridge |
+| LAN | igc1 | 10.10.10.1/24, DHCP server enabled |
+| OPT1 | igc2 | Free — planned for an isolated workstation segment |
+| OPT2 | igc3 | Free |
 
----
+Both interfaces were assigned using pfSense's auto-detection rather than by name. Interface names don't tell you which physical socket they correspond to, and guessing wrong was one of the things that derailed the first attempt at this build.
 
-## 📁 Folder Structure
+Two settings that aren't defaults and matter here:
 
-```
-homelab/
-├── setup/          # Step-by-step installation guides
-│   ├── proxmox.md
-│   ├── pfsense-vm.md
-│   └── vm-setup.md
-├── systems/        # Per-OS notes and configurations
-│   ├── kali.md
-│   ├── windows11.md
-│   └── debian.md
-├── notes/          # Concepts, issues, troubleshooting logs
-└── README.md
-```
+- **Block RFC1918 private networks is disabled on WAN.** The WAN address is itself a private address, so leaving the block enabled makes pfSense discard its own upstream traffic.
+- **DNS Resolver listens on all interfaces, with forwarding enabled.** Restricted to localhost it resolves for pfSense but silently ignores every client on the LAN.
 
----
+## Proxmox
 
-## 🧱 Build Journey & Key Decisions
+The host has a single physical NIC (`enp0s31f6`) bridged to `vmbr0`, which carries the static lab address. A second bridge, `vmbr1`, has no physical port and exists as a fully isolated network for experiments that shouldn't reach the internet at all.
 
-This lab wasn't built in a straight line. Here are the real decisions and pivots made along the way — which turned out to be the most valuable learning.
+`vmbr1` originally used `10.10.10.1/24`, left over from an earlier attempt at running pfSense as a VM. That address is now the physical firewall's LAN, so the two collided — the host would have had two routes to the same subnet, one of them a dead end. It now sits on `10.10.99.0/24`.
 
-### Phase 1 — Initial Proxmox Setup ✅
-- Installed Proxmox VE on Lenovo M710q
-- Assigned static IP `192.168.1.150`
-- Created base VMs: Kali, Windows 11, Debian/Mint
-- Basic networking via `vmbr0`
+## Build history
 
-### Phase 2 — Physical pfSense Attempt ❌
+**First attempt — physical pfSense.** The intended design put a dedicated firewall between the home router and the lab. It never worked. The real cause wasn't configuration: there was no wired uplink available, and the cheap WiFi bridge standing in for one couldn't hold a stable connection against a WPA3 router. Everything downstream of that — interface confusion, subnet mismatches, DHCP conflicts — was a symptom.
 
-**Goal:** insert a physical pfSense box between the router and Proxmox.
+**Second attempt — pfSense as a VM.** Moving the firewall inside Proxmox removed every hardware variable at once. It worked, and proved the network design was sound. But it also meant the firewall could only protect virtual machines, not physical devices.
 
-**Problems encountered:**
-- WAN/LAN interface misassignment (`igc0`/`igc1` confusion)
-- IP/subnet mismatches between pfSense LAN and Proxmox
-- WiFi dependency: pfSense needs a wired WAN, but the environment relies on WiFi
-- WPA3 incompatibility with cheap bridge devices (TP-Link TL-WR902AC)
-- DHCP conflicts from manual IP configurations
-- Complete connectivity loss when pfSense was inserted into the path
+**Current build — physical pfSense, second time.** After moving to a location with a usable uplink, the original design became viable. The same hardware, the same topology, and this time it came up cleanly. What changed wasn't skill — it was that the one blocking constraint had gone.
 
-**Root cause:** The single Ethernet port + WiFi-only uplink made a physical firewall insertion architecturally impossible without additional hardware.
+A firewall on real hardware is worth the extra effort here: physical machines can sit behind it, spare ports allow real segmentation, and it behaves like the equipment it's modelled on.
 
-### Phase 3 — Virtual pfSense (Breakthrough) ✅
+## Status
 
-**Decision:** move pfSense entirely inside Proxmox as a VM.
+Working: WiFi bridge, pfSense WAN and LAN, DHCP, DNS resolution for clients, Proxmox on the lab network, managed switch with static management address.
 
-**Why it worked:**
-- Proxmox handles all physical networking
-- pfSense only sees clean virtual NICs — no driver or hardware issues
-- WPA3/WiFi problems disappear at the hypervisor layer
-- Full isolation between WAN (vmbr0) and LAN (vmbr1) achieved virtually
+Not yet done: virtual machines are still on the old network configuration and need reconnecting. Firewall rules are at defaults. VLANs, IDS, and remote access are planned but untouched.
 
-**Key insight:** Virtualization doesn't just simplify labs — it removes entire classes of physical hardware problems.
+## Roadmap
 
----
+- Reconnect Kali, Windows 11 and Debian to the lab network
+- Split the workstation onto OPT1 as a separate segment with rules between it and the lab
+- VLAN segmentation across the managed switch
+- Firewall rules and traffic logging
+- Suricata for intrusion detection, with traffic generated from Kali as a test
+- Forward pfSense logs to a SIEM
+- WireGuard for remote access
 
-## ⚙️ Network Configuration
+## Notes on measurement
 
-### Proxmox Bridges
+The WiFi uplink measures roughly 4% packet loss with 2.8 ms average latency. Low latency alongside scattered drops points to interference rather than weak signal. It's recorded here as a baseline: if something misbehaves later and the loss reads 15%, that's a change worth investigating rather than a constant to work around.
 
-| Bridge | Role | Connected to |
-|--------|------|-------------|
-| `vmbr0` | WAN / uplink | Physical NIC → home router |
-| `vmbr1` | Internal LAN | pfSense LAN, all lab VMs |
+## Documentation
 
-### pfSense VM
+- `setup/firewall-setup.md` — pfSense configuration and the full history of getting there
+- `setup/network-bridge.md` — WiFi client bridge setup
+- `setup/proxmox-setup.md` — host network configuration
+- `notes/troubleshooting.md` — problems encountered, with symptoms and diagnosis
 
-| Interface | Assignment | IP |
-|-----------|-----------|-----|
-| WAN | vmbr0 | DHCP (from home router) |
-| LAN | vmbr1 | `10.10.10.1/24` (static) |
-
-### DHCP Range (pfSense LAN)
-`10.10.10.100` → `10.10.10.200`
-
----
-
-## ✅ Current Status
-
-| Component | Status |
-|-----------|--------|
-| Proxmox VE | ✅ Running |
-| Kali Linux VM | ✅ Running |
-| Windows 11 VM | ✅ Running |
-| Debian VM | ✅ Running |
-| pfSense VM | 🔧 Configuring |
-| vmbr0 / vmbr1 bridges | ✅ Configured |
-| Internet via WiFi→Ethernet | ⚠️ In progress |
-| DHCP on LAN | 🔧 Configuring |
-| VLANs | 📋 Planned |
-| IDS (Snort/Suricata) | 📋 Planned |
-
----
-
-## 🚀 Roadmap
-
-- [ ] Stable internet connection (WiFi 6 router with WISP/client mode)
-- [ ] Complete pfSense LAN/WAN/DHCP configuration
-- [ ] Validate full VM internet access through pfSense
-- [ ] Implement VLAN segmentation on managed switch
-- [ ] Configure firewall rules and traffic logging
-- [ ] Deploy IDS/IPS (Snort or Suricata on pfSense)
-- [ ] First pentesting exercises: Kali → Windows 11
-- [ ] VPN setup for remote access
-
----
-
-## 🧠 Lessons Learned
-
-1. **WiFi ≠ Ethernet** — especially for firewall setups. pfSense is designed for wired WAN.
-2. **Virtualisation solves hardware problems** — moving pfSense into a VM eliminated an entire category of physical compatibility issues.
-3. **Reduce variables when debugging** — isolate one layer at a time.
-4. **Same subnet first** — always verify IP/subnet alignment before debugging routing.
-5. **Consumer hardware has limits** — cheap WiFi bridges and WPA3 don't mix well.
-6. **Document failures** — they're often more instructive than successes.
-
----
-
-## 🔗 References & Tools
+## References
 
 - [Proxmox VE Documentation](https://pve.proxmox.com/pve-docs/)
 - [pfSense Documentation](https://docs.netgate.com/pfsense/en/latest/)
-- [Kali Linux](https://www.kali.org/)
-
----
-
-*This is an active learning project. The goal is not a perfect setup — it's understanding how every piece works.*
