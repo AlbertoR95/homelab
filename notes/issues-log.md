@@ -145,6 +145,22 @@ reboot -f
 
 ---
 
+## Firewall hardware failure
+
+**Symptom.** The pfSense box stopped responding. Power LED off, Ethernet port LEDs still lit, case cold instead of its usual warm. Clients lost DHCP, DNS and routing; Proxmox still answered at its static address, confirming the rest of the network was intact.
+
+**Diagnosis.** Lit Ethernet LEDs on a dead machine are expected — the network PHY draws power independently of the CPU, so it proves current reaches the board but says nothing about the system running. The cold case was the real signal: nothing was executing. A power drain changed nothing. Opening the case produced a faint burnt-plastic smell with no visible damage — no swollen capacitors, no scorch marks.
+
+The cause was thermal. The unit was fanless with no heatsink touching the CPU; cooling was passive airflow through vents in the lid alone. It had run hot since day one. For a device running 24/7 that was never adequate, and the failure was cumulative rather than sudden.
+
+**Recovered.** DDR3L SODIMM and mSATA SSD both appear undamaged. The SSD still holds `/cf/conf/config.xml` — the full pfSense configuration, readable with a USB adapter.
+
+**Cost.** No configuration backup had been taken. The XML export from Diagnostics → Backup & Restore takes seconds and would have made this an inconvenience rather than a rebuild. The config is recoverable from the SSD, but that is luck, not planning.
+
+**Lesson.** Hardware running persistently hot is a fault in progress, not a quirk to tolerate — the warning was there for months and was read as a characteristic of the device. Passive cooling with no heatsink contact is not sufficient for continuous operation; vents in a lid are not cooling. Take the backup as soon as a working state is reached, not when it feels significant enough to warrant one. 
+
+
+---
 ## Recurring patterns
 
 **Test three layers separately.** Gateway, external IP, domain name. Each isolates a different part of the chain, and which one fails narrows the cause immediately:
